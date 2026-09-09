@@ -1,0 +1,439 @@
+#!/usr/bin/env node
+// folio — CLI for the folio HTML artifact host.
+// Zero dependencies: node: builtins + global fetch only.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const VERSION = '1.0.0';
+const ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const PREFIX = { public: 'p', shared: 't', private: 'a' };
+const DEFAULT_URL = 'http://127.0.0.1:8082';
+
+const USAGE = `folio — publish HTML artifacts to a folio host
+
+usage:
+  folio publish <file> [--id ID] [--title T] [--public|--shared|--private]
+                       [--no-sandbox] [--json]
+  folio list [--json]
+  folio show <id> [--json]
+  folio share <id> (--public|--shared|--private) [--with EMAIL]... [--json]
+  folio rm <id> [--json]
+  folio login [--url URL] [--token TOKEN]
+  folio help | --help | -h
+  folio version | --version
+
+options:
+  --id ID          document id (default: slug of the filename)
+  --title T        human title (default: the id)
+  --public         serve at /p/<id>
+  --shared         serve at /t/<id>
+  --private        serve at /a/<id>   (default for publish)
+  --no-sandbox     drop the CSP sandbox directive for this doc
+  --with EMAIL     grant an address access (repeatable, use with --shared)
+  --json           machine-readable output on stdout
+
+config:
+  FOLIO_URL    host base url   (default ${DEFAULT_URL})
+  FOLIO_TOKEN  bearer token for /api/*
+  Falls back to ~/.config/folio/config.json  {"url":"...","token":"..."} (mode 0600).
+  'folio login' writes that file. The token is never printed.
+
+exit codes:
+  0  success
+  1  request or runtime failure
+  2  usage error
+`;
+
+class UserError extends Error {
+  constructor(message, code = 1) {
+    super(message);
+    this.name = 'UserError';
+    this.code = code;
+  }
+}
+const usageError = (m) => new UserError(m, 2);
+
+/* ---------------------------------------------------------------- config */
+
+function configPath() {
+  if (process.env.FOLIO_CONFIG) return process.env.FOLIO_CONFIG;
+  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  return path.join(base, 'folio', 'config.json');
+}
+
+function readConfig() {
+  const p = configPath();
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new UserError(`cannot read ${p}: ${err.code || err.message}`);
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('not a JSON object');
+    }
+    return parsed;
+  } catch {
+    throw new UserError(`${p} is not valid JSON — fix or delete it`);
+  }
+}
+
+function writeConfig(next) {
+  const p = configPath();
+  const dir = path.dirname(p);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ }
+  const tmp = `${p}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600); // writeFileSync's mode only applies on create
+  fs.renameSync(tmp, p);
+  fs.chmodSync(p, 0o600);
+  return p;
+}
+
+function settings() {
+  const cfg = readConfig();
+  const url = String(process.env.FOLIO_URL || cfg.url || DEFAULT_URL).replace(/\/+$/, '');
+  const token = process.env.FOLIO_TOKEN || cfg.token || '';
+  if (!/^https?:\/\//.test(url)) {
+    throw new UserError(`invalid folio url: ${url} (expected http:// or https://)`);
+  }
+  return { url, token };
+}
+
+/* ------------------------------------------------------------------ http */
+
+function firstLine(text) {
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > 200 ? `${s.slice(0, 197)}...` : s;
+}
+
+async function api(cfg, method, pathname, opts = {}) {
+  if (!cfg.token) {
+    throw new UserError(
+      'no token — set FOLIO_TOKEN or run: folio login --token <token>',
+    );
+  }
+  const u = new URL(cfg.url + pathname);
+  for (const [k, v] of Object.entries(opts.query || {})) {
+    if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, String(v));
+  }
+  const headers = { authorization: `Bearer ${cfg.token}` };
+  if (opts.contentType) headers['content-type'] = opts.contentType;
+  let res;
+  try {
+    res = await fetch(u, { method, headers, body: opts.body });
+  } catch (err) {
+    const why = err?.cause?.code || err?.cause?.errors?.[0]?.code
+      || err?.code || err?.message || 'network error';
+    throw new UserError(`cannot reach folio at ${cfg.url} (${why})`);
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    const hint = res.status === 401
+      ? ' — token rejected'
+      : res.status === 413
+        ? ' — document too large'
+        : '';
+    const detail = hint || (text ? ` — ${firstLine(text)}` : '');
+    throw new UserError(
+      `${method} ${u.pathname} failed: ${res.status} ${res.statusText}${detail}`,
+    );
+  }
+  return { status: res.status, text };
+}
+
+function parseJSON(text, what) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new UserError(`${what}: server returned malformed JSON`);
+  }
+}
+
+function docList(text) {
+  const parsed = parseJSON(text, 'list');
+  const docs = Array.isArray(parsed) ? parsed : parsed?.docs;
+  if (!Array.isArray(docs)) throw new UserError('list: unexpected response shape');
+  return docs;
+}
+
+/* ------------------------------------------------------------------ args */
+
+function parseFlags(argv, spec) {
+  const flags = Object.create(null);
+  const positionals = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') {
+      positionals.push(...argv.slice(i + 1));
+      break;
+    }
+    if (!arg.startsWith('--')) {
+      positionals.push(arg);
+      continue;
+    }
+    let name = arg.slice(2);
+    let inline = null;
+    const eq = name.indexOf('=');
+    if (eq !== -1) {
+      inline = name.slice(eq + 1);
+      name = name.slice(0, eq);
+    }
+    const kind = spec[name];
+    if (!kind) throw usageError(`unknown option: --${name}`);
+    if (kind === 'bool') {
+      if (inline !== null) throw usageError(`--${name} takes no value`);
+      flags[name] = true;
+      continue;
+    }
+    const value = inline !== null ? inline : argv[++i];
+    if (value === undefined) throw usageError(`--${name} needs a value`);
+    if (kind === 'list') (flags[name] ||= []).push(value);
+    else flags[name] = value;
+  }
+  return { flags, positionals };
+}
+
+function pickVisibility(flags, fallback) {
+  const chosen = ['public', 'shared', 'private'].filter((v) => flags[v]);
+  if (chosen.length > 1) {
+    throw usageError(`--${chosen[0]} and --${chosen[1]} are mutually exclusive`);
+  }
+  return chosen[0] || fallback;
+}
+
+function slugify(file) {
+  const base = path.basename(file).replace(/\.[^.]+$/, '');
+  let id = base
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .replace(/[-_.]+$/, '')
+    .slice(0, 64);
+  if (!id) id = 'doc';
+  return id;
+}
+
+function checkId(id) {
+  if (!ID_RE.test(id)) {
+    throw usageError(
+      `invalid id ${JSON.stringify(id)} — must match /^[a-z0-9][a-z0-9._-]{0,63}$/`,
+    );
+  }
+  return id;
+}
+
+function docUrl(cfg, visibility, id) {
+  return `${cfg.url}/${PREFIX[visibility] || 'a'}/${id}`;
+}
+
+function human(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n)) return '?';
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
+  return `${(n / 1024 / 1024).toFixed(1)}M`;
+}
+
+const out = (s) => process.stdout.write(`${s}\n`);
+const outJSON = (v) => out(JSON.stringify(v, null, 2));
+
+/* -------------------------------------------------------------- commands */
+
+async function cmdPublish(argv) {
+  const { flags, positionals } = parseFlags(argv, {
+    id: 'string',
+    title: 'string',
+    public: 'bool',
+    shared: 'bool',
+    private: 'bool',
+    'no-sandbox': 'bool',
+    json: 'bool',
+  });
+  const file = positionals[0];
+  if (!file) throw usageError('publish needs a file: folio publish <file>');
+  if (positionals.length > 1) throw usageError(`unexpected argument: ${positionals[1]}`);
+
+  let body;
+  try {
+    body = fs.readFileSync(file);
+  } catch (err) {
+    if (err.code === 'ENOENT') throw new UserError(`no such file: ${file}`);
+    if (err.code === 'EISDIR') throw new UserError(`${file} is a directory`);
+    throw new UserError(`cannot read ${file}: ${err.code || err.message}`);
+  }
+
+  const visibility = pickVisibility(flags, 'private');
+  const id = checkId(flags.id ? String(flags.id) : slugify(file));
+  const cfg = settings();
+
+  await api(cfg, 'PUT', `/api/a/${encodeURIComponent(id)}`, {
+    query: { title: flags.title, visibility },
+    contentType: 'text/html; charset=utf-8',
+    body,
+  });
+
+  if (flags['no-sandbox']) {
+    await api(cfg, 'PATCH', `/api/a/${encodeURIComponent(id)}`, {
+      contentType: 'application/json',
+      body: JSON.stringify({ sandbox: false }),
+    });
+  }
+
+  const url = docUrl(cfg, visibility, id);
+  if (flags.json) {
+    outJSON({ id, url, visibility, bytes: body.length, sandbox: !flags['no-sandbox'] });
+  } else {
+    out(url);
+  }
+}
+
+async function cmdList(argv) {
+  const { flags, positionals } = parseFlags(argv, { json: 'bool' });
+  if (positionals.length) throw usageError(`unexpected argument: ${positionals[0]}`);
+  const cfg = settings();
+  const { text } = await api(cfg, 'GET', '/api/a');
+  const docs = docList(text);
+  if (flags.json) return outJSON(docs);
+  if (!docs.length) return out('no documents');
+  const rows = docs.map((d) => [
+    String(d.id ?? ''),
+    String(d.visibility ?? ''),
+    human(d.bytes),
+    String(d.updated ?? d.created ?? ''),
+    String(d.title ?? ''),
+  ]);
+  const width = [0, 1, 2, 3].map((i) => Math.max(...rows.map((r) => r[i].length)));
+  for (const r of rows) {
+    out(`${r[0].padEnd(width[0])}  ${r[1].padEnd(width[1])}  ${r[2].padStart(width[2])}  ${r[3].padEnd(width[3])}  ${r[4]}`);
+  }
+}
+
+async function cmdShow(argv) {
+  const { flags, positionals } = parseFlags(argv, { json: 'bool' });
+  const id = positionals[0];
+  if (!id) throw usageError('show needs an id: folio show <id>');
+  if (positionals.length > 1) throw usageError(`unexpected argument: ${positionals[1]}`);
+  const cfg = settings();
+  const { text } = await api(cfg, 'GET', '/api/a');
+  const doc = docList(text).find((d) => d && d.id === id);
+  if (!doc) throw new UserError(`no such document: ${id}`);
+  if (flags.json) return outJSON(doc);
+  out(`id          ${doc.id}`);
+  out(`title       ${doc.title ?? ''}`);
+  out(`visibility  ${doc.visibility ?? ''}`);
+  out(`sandbox     ${doc.sandbox !== false}`);
+  if (Array.isArray(doc.shared_with) && doc.shared_with.length) {
+    out(`shared_with ${doc.shared_with.join(', ')}`);
+  }
+  out(`bytes       ${doc.bytes ?? '?'}`);
+  out(`created     ${doc.created ?? ''}`);
+  out(`updated     ${doc.updated ?? ''}`);
+  if (doc.sha256) out(`sha256      ${doc.sha256}`);
+  out(`url         ${docUrl(cfg, doc.visibility, doc.id)}`);
+}
+
+async function cmdShare(argv) {
+  const { flags, positionals } = parseFlags(argv, {
+    public: 'bool',
+    shared: 'bool',
+    private: 'bool',
+    with: 'list',
+    json: 'bool',
+  });
+  const id = positionals[0];
+  if (!id) throw usageError('share needs an id: folio share <id> --public|--shared|--private');
+  if (positionals.length > 1) throw usageError(`unexpected argument: ${positionals[1]}`);
+  const visibility = pickVisibility(flags, null);
+  if (!visibility && !flags.with) {
+    throw usageError('share needs one of --public, --shared, --private (or --with EMAIL)');
+  }
+  checkId(id);
+  const patch = {};
+  if (visibility) patch.visibility = visibility;
+  if (flags.with) patch.shared_with = flags.with;
+  const cfg = settings();
+  await api(cfg, 'PATCH', `/api/a/${encodeURIComponent(id)}`, {
+    contentType: 'application/json',
+    body: JSON.stringify(patch),
+  });
+  const url = docUrl(cfg, visibility || 'shared', id);
+  if (flags.json) outJSON({ id, url, ...patch });
+  else out(url);
+}
+
+async function cmdRm(argv) {
+  const { flags, positionals } = parseFlags(argv, { json: 'bool' });
+  const id = positionals[0];
+  if (!id) throw usageError('rm needs an id: folio rm <id>');
+  if (positionals.length > 1) throw usageError(`unexpected argument: ${positionals[1]}`);
+  checkId(id);
+  const cfg = settings();
+  await api(cfg, 'DELETE', `/api/a/${encodeURIComponent(id)}`);
+  if (flags.json) outJSON({ id, deleted: true });
+  else out(`deleted ${id}`);
+}
+
+async function cmdLogin(argv) {
+  const { flags, positionals } = parseFlags(argv, { url: 'string', token: 'string' });
+  if (positionals.length) throw usageError(`unexpected argument: ${positionals[0]}`);
+  const cfg = readConfig();
+  const url = String(flags.url || process.env.FOLIO_URL || cfg.url || DEFAULT_URL)
+    .replace(/\/+$/, '');
+  const token = flags.token || process.env.FOLIO_TOKEN || cfg.token;
+  if (!token) {
+    throw usageError('login needs a token: folio login --token <token> [--url URL]');
+  }
+  if (!/^https?:\/\//.test(url)) {
+    throw new UserError(`invalid folio url: ${url} (expected http:// or https://)`);
+  }
+  const p = writeConfig({ ...cfg, url, token });
+  // The token itself is never echoed.
+  out(`wrote ${p} (mode 0600) for ${url}`);
+}
+
+/* ------------------------------------------------------------------ main */
+
+async function main(argv) {
+  const cmd = argv[0];
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+    process.stdout.write(USAGE);
+    return cmd ? 0 : 2;
+  }
+  if (cmd === 'version' || cmd === '--version' || cmd === '-V') {
+    out(`folio ${VERSION}`);
+    return 0;
+  }
+  const rest = argv.slice(1);
+  switch (cmd) {
+    case 'publish': await cmdPublish(rest); return 0;
+    case 'list': case 'ls': await cmdList(rest); return 0;
+    case 'show': await cmdShow(rest); return 0;
+    case 'share': await cmdShare(rest); return 0;
+    case 'rm': case 'delete': await cmdRm(rest); return 0;
+    case 'login': await cmdLogin(rest); return 0;
+    default:
+      throw usageError(`unknown command: ${cmd} (try: folio --help)`);
+  }
+}
+
+try {
+  process.exitCode = await main(process.argv.slice(2));
+} catch (err) {
+  if (err instanceof UserError) {
+    process.stderr.write(`folio: ${err.message}\n`);
+    if (err.code === 2) process.stderr.write('run `folio --help` for usage\n');
+    process.exitCode = err.code;
+  } else {
+    // Never leak a stack trace to the user.
+    process.stderr.write(`folio: ${err?.message || String(err)}\n`);
+    process.exitCode = 1;
+  }
+}

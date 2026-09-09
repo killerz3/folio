@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# folio — cloudflared ingress snippet
+#
+# Paste the two lines marked "PASTE" into /etc/cloudflared/config.yml, inside
+# the existing `ingress:` list, ABOVE the final catch-all
+# `- service: http_status:404`. Ingress rules are matched top-down and the
+# catch-all matches everything, so anything below it is dead.
+#
+#   sudo cp /etc/cloudflared/config.yml /etc/cloudflared/config.yml.bak
+#   sudoedit /etc/cloudflared/config.yml
+#   sudo cloudflared tunnel ingress validate
+#   sudo cloudflared tunnel ingress rule https://folio.kz3.dev/p/demo
+#   sudo systemctl restart cloudflared
+# ---------------------------------------------------------------------------
+
+# >>> PASTE (2 lines, indented exactly like the babel entry) >>>
+  - hostname: folio.kz3.dev
+    service: http://127.0.0.1:8082
+# <<< PASTE <<<
+
+
+# ---------------------------------------------------------------------------
+# For reference, the resulting ingress section of /etc/cloudflared/config.yml
+# for tunnel e56d9ee8-37a7-4a22-bbbe-03668982baf7 should read:
+#
+# ingress:
+#   - hostname: babel.kz3.dev
+#     service: http://127.0.0.1:8081
+#   - hostname: folio.kz3.dev
+#     service: http://127.0.0.1:8082
+#   - service: http_status:404
+#
+# Notes
+# -----
+# * Plain http:// to loopback is correct: the origin binds 127.0.0.1 only and
+#   never terminates TLS. Do not add noTLSVerify (it is meaningless for http).
+# * Do not add a `path:` filter here. Path routing is Cloudflare Access's job
+#   (deploy/ACCESS.md); the origin re-checks visibility itself and 404s on a
+#   prefix mismatch, so a tunnel-level path rule would only add a place for the
+#   two to disagree.
+# * /healthz is deliberately NOT reachable through the tunnel as a distinct
+#   route — it is served on the same origin, so it will answer at
+#   https://folio.kz3.dev/healthz for anyone who passes the Access policy for
+#   `/*`. It returns only the string "ok".
+# * If you ever move the port, change it in BOTH /etc/folio/env (FOLIO_PORT)
+#   and here, then restart folio and cloudflared.
+# ---------------------------------------------------------------------------

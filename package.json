@@ -1,0 +1,30 @@
+{
+  "name": "folio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted single-origin HTML artifact host. Zero runtime dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "folio": "./bin/folio"
+  },
+  "main": "./src/server.js",
+  "exports": {
+    ".": "./src/server.js",
+    "./store": "./src/store.js",
+    "./auth": "./src/auth.js",
+    "./render": "./src/render.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "SPEC.md"
+  ],
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/"
+  }
+}

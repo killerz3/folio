@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Architecture of folio - a self-hosted HTML artifact host where the URL prefix is the permission tier.">
+<title>folio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='.9em'%20font-size='90'%3E%F0%9F%93%81%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --base:#232136; --surface:#2a273f; --overlay:#393552;
+    --muted:#6e6a86; --subtle:#908caa; --text:#e0def4;
+    --love:#eb6f92; --gold:#f6c177; --rose:#ea9a97;
+    --pine:#3e8fb0; --foam:#9ccfd8; --iris:#c4a7e7;
+    --hl-low:#2a283e; --hl-med:#44415a; --hl-high:#56526e;
+    --display:"Newsreader",Georgia,"Times New Roman",serif;
+    --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --measure:68ch;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--base);color:var(--text);font-family:var(--sans);
+    font-size:16px;line-height:1.65;margin:0;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(2rem,5vw,4.5rem) clamp(1.1rem,4vw,2.5rem) 6rem}
+  .col{max-width:var(--measure)}
+
+  /* ---- masthead ---- */
+  .mast{display:flex;flex-direction:column;gap:1.15rem;
+    padding-bottom:2.2rem;border-bottom:1px solid var(--hl-med)}
+  .wordmark{font-family:var(--display);font-weight:300;
+    font-size:clamp(3.4rem,9vw,5.6rem);line-height:.92;letter-spacing:-.025em;
+    margin:0;text-wrap:balance}
+  .wordmark em{font-style:italic;color:var(--iris)}
+  .standfirst{font-family:var(--display);font-size:clamp(1.1rem,2.4vw,1.4rem);
+    font-weight:300;line-height:1.5;color:var(--subtle);max-width:52ch;margin:0}
+  .statusbar{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.4rem}
+
+  /* ---- pills ---- */
+  .pill{font-family:var(--mono);font-size:.7rem;letter-spacing:.07em;
+    text-transform:uppercase;padding:.3rem .6rem;border-radius:2px;
+    border:1px solid var(--hl-med);color:var(--subtle);white-space:nowrap}
+  .pill.live{border-color:color-mix(in srgb,var(--foam) 45%,transparent);
+    color:var(--foam);background:color-mix(in srgb,var(--foam) 8%,transparent)}
+  .pill.wait{border-color:color-mix(in srgb,var(--gold) 45%,transparent);
+    color:var(--gold);background:color-mix(in srgb,var(--gold) 8%,transparent)}
+
+  /* ---- sections ---- */
+  section{margin-top:4rem}
+  .eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 .7rem;
+    display:flex;align-items:center;gap:.7rem}
+  .eyebrow::after{content:"";flex:1;height:1px;background:var(--hl-med)}
+  h2{font-family:var(--display);font-weight:400;font-size:clamp(1.7rem,3.6vw,2.3rem);
+    line-height:1.2;letter-spacing:-.015em;margin:0 0 1rem;text-wrap:balance}
+  h3{font-family:var(--sans);font-weight:600;font-size:1rem;
+    letter-spacing:.005em;margin:2rem 0 .5rem;color:var(--text)}
+  p{margin:0 0 1.05rem}
+  a{color:var(--foam);text-decoration-thickness:1px;text-underline-offset:2px}
+  a:focus-visible,summary:focus-visible{outline:2px solid var(--iris);outline-offset:3px}
+  strong{font-weight:600;color:#fff}
+  code{font-family:var(--mono);font-size:.86em;
+    background:var(--hl-low);border:1px solid var(--overlay);
+    padding:.1em .35em;border-radius:3px;color:var(--rose)}
+
+  /* ---- figures ---- */
+  figure{margin:2rem 0;border:1px solid var(--hl-med);border-radius:4px;
+    background:var(--surface);overflow:hidden}
+  .figbody{overflow-x:auto;padding:1.6rem 1.4rem .6rem}
+  figure svg{display:block;width:100%;min-width:640px;height:auto}
+  figcaption{font-size:.85rem;line-height:1.55;color:var(--subtle);
+    padding:.9rem 1.4rem 1.1rem;border-top:1px solid var(--overlay);
+    background:var(--hl-low)}
+  figcaption b{color:var(--text);font-weight:600}
+
+  /* ---- fact grid ---- */
+  .facts{display:grid;gap:1px;background:var(--hl-med);
+    border:1px solid var(--hl-med);border-radius:4px;
+    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:2rem 0}
+  .fact{background:var(--surface);padding:1rem 1.1rem;
+    display:flex;flex-direction:column;gap:.25rem}
+  .fact dt{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted)}
+  .fact dd{margin:0;font-family:var(--mono);font-size:.92rem;color:var(--text);
+    word-break:break-word}
+
+  /* ---- tables ---- */
+  .tablewrap{overflow-x:auto;margin:1.6rem 0;border:1px solid var(--hl-med);
+    border-radius:4px}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:.9rem}
+  th,td{text-align:left;padding:.7rem .95rem;border-bottom:1px solid var(--overlay);
+    vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted);background:var(--hl-low);
+    font-weight:400;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  td code{background:none;border:none;padding:0;color:var(--rose)}
+  .tier-p{color:var(--foam)} .tier-t{color:var(--gold)} .tier-a{color:var(--love)}
+
+  /* ---- code block ---- */
+  pre{font-family:var(--mono);font-size:.84rem;line-height:1.65;
+    background:var(--hl-low);border:1px solid var(--hl-med);border-radius:4px;
+    padding:1.1rem 1.2rem;overflow-x:auto;margin:1.4rem 0;color:var(--subtle)}
+  pre b{color:var(--foam);font-weight:500}
+  pre i{color:var(--muted);font-style:normal}
+
+  /* ---- callout ---- */
+  .note{border-left:2px solid var(--gold);background:var(--hl-low);
+    padding:1rem 1.2rem;margin:1.6rem 0;font-size:.94rem}
+  .note.danger{border-left-color:var(--love)}
+  .note p:last-child{margin-bottom:0}
+  .note .lab{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--gold);display:block;margin-bottom:.35rem}
+  .note.danger .lab{color:var(--love)}
+
+  /* ---- checklist ---- */
+  ul.plain{list-style:none;padding:0;margin:1.2rem 0;display:flex;
+    flex-direction:column;gap:.6rem}
+  ul.plain li{display:grid;grid-template-columns:1.4rem 1fr;gap:.6rem;
+    align-items:start;font-size:.95rem}
+  .tick{font-family:var(--mono);color:var(--foam);line-height:1.6}
+  .cross{font-family:var(--mono);color:var(--muted);line-height:1.6}
+
+  footer{margin-top:5rem;padding-top:1.6rem;border-top:1px solid var(--hl-med);
+    font-family:var(--mono);font-size:.74rem;color:var(--muted);
+    display:flex;flex-wrap:wrap;gap:.4rem 1.2rem}
+
+  @media (prefers-reduced-motion:no-preference){
+    a{transition:color .15s ease}
+  }
+</style>
+<style>
+  html{color-scheme:dark}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <h1 class="wordmark">folio</h1>
+    <p class="standfirst">A self-hosted host for the HTML documents Claude writes — published by path, gated by identity at the edge, and re-checked by the origin that never trusts it.</p>
+    <div class="statusbar">
+      <span class="pill live">origin live</span>
+      <span class="pill live">tunnel routed</span>
+      <span class="pill live">access live</span>
+      <span class="pill live">dns live</span>
+      <span class="pill">43/43 tests</span>
+      <span class="pill">0 dependencies</span>
+    </div>
+  </header>
+
+  <section>
+    <p class="eyebrow">The shape of it</p>
+    <div class="col">
+      <h2>One origin, three prefixes, two independent checks</h2>
+      <p>folio serves standalone HTML documents from a single hostname. A document's URL prefix <em>is</em> its permission tier, so sharing something is a metadata change rather than a dashboard visit. Cloudflare Access decides who reaches the box; the box independently decides whether the document actually belongs at the path being asked for.</p>
+      <p>Neither check trusts the other. That redundancy is the whole security design, and it is what makes a single origin safe enough to keep the URLs clean.</p>
+    </div>
+
+    <dl class="facts">
+      <div class="fact"><dt>Hostname</dt><dd>folio.kz3.dev</dd></div>
+      <div class="fact"><dt>Origin</dt><dd>127.0.0.1:8082</dd></div>
+      <div class="fact"><dt>Runtime</dt><dd>Node 22 · no deps</dd></div>
+      <div class="fact"><dt>Runs as</dt><dd>folio (system user)</dd></div>
+      <div class="fact"><dt>Storage</dt><dd>/srv/folio/docs</dd></div>
+      <div class="fact"><dt>Ingress</dt><dd>cloudflared e56d9ee8…</dd></div>
+    </dl>
+  </section>
+
+  <section>
+    <p class="eyebrow">Diagram 01 · Request path</p>
+    <div class="col">
+      <h2>How a request reaches the disk</h2>
+      <p>Three kinds of caller arrive by three different routes. A browser carries a cookie; a remote CLI carries headers a browser can never forge; the CLI on the box skips the internet altogether. The tunnel dials outward, so the origin has no inbound port open to the world.</p>
+    </div>
+
+    <figure>
+      <div class="figbody">
+        <svg viewBox="0 0 960 470" role="img" aria-label="Request path: browser sends a CF_Authorization cookie and remote CLI sends service-token headers to the Cloudflare edge, which matches an Access policy by path and forwards authorized requests through an outbound cloudflared tunnel to the folio origin on port 8082, which re-checks prefix against visibility and a bearer token before reading or writing the docs directory. The CLI running on the box connects to the origin directly over loopback.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#908caa"/>
+            </marker>
+            <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#9ccfd8"/>
+            </marker>
+          </defs>
+
+          <!-- clients -->
+          <rect x="16" y="52" width="176" height="62" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="104" y="78" text-anchor="middle" font-family="IBM Plex Sans" font-size="13" fill="#e0def4">Browser</text>
+          <text x="104" y="96" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">you, signed in</text>
+
+          <rect x="16" y="168" width="176" height="62" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="104" y="194" text-anchor="middle" font-family="IBM Plex Sans" font-size="13" fill="#e0def4">CLI · laptop</text>
+          <text x="104" y="212" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">folio publish</text>
+
+          <rect x="16" y="366" width="176" height="62" rx="3" fill="#2a273f" stroke="#9ccfd8" stroke-dasharray="3 3"/>
+          <text x="104" y="392" text-anchor="middle" font-family="IBM Plex Sans" font-size="13" fill="#9ccfd8">CLI · on the box</text>
+          <text x="104" y="410" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">Claude writes here</text>
+
+          <!-- edge -->
+          <rect x="262" y="34" width="212" height="248" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="368" y="58" text-anchor="middle" font-family="IBM Plex Sans" font-size="13" font-weight="600" fill="#e0def4">Cloudflare edge</text>
+          <text x="368" y="76" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">match policy by path</text>
+          <rect x="280" y="90" width="176" height="30" rx="2" fill="#2a283e" stroke="#56526e"/>
+          <text x="292" y="110" font-family="IBM Plex Mono" font-size="10.5" fill="#9ccfd8">/p/*</text>
+          <text x="444" y="110" text-anchor="end" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">bypass</text>
+          <rect x="280" y="126" width="176" height="30" rx="2" fill="#2a283e" stroke="#56526e"/>
+          <text x="292" y="146" font-family="IBM Plex Mono" font-size="10.5" fill="#f6c177">/t/*</text>
+          <text x="444" y="146" text-anchor="end" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">listed emails</text>
+          <rect x="280" y="162" width="176" height="30" rx="2" fill="#2a283e" stroke="#56526e"/>
+          <text x="292" y="182" font-family="IBM Plex Mono" font-size="10.5" fill="#eb6f92">/api/*</text>
+          <text x="444" y="182" text-anchor="end" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">service auth</text>
+          <rect x="280" y="198" width="176" height="30" rx="2" fill="#2a283e" stroke="#56526e"/>
+          <text x="292" y="218" font-family="IBM Plex Mono" font-size="10.5" fill="#c4a7e7">/*</text>
+          <text x="444" y="218" text-anchor="end" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">owner only</text>
+          <text x="368" y="252" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">most specific path wins</text>
+          <text x="368" y="270" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">catch-all = private by default</text>
+
+          <!-- tunnel -->
+          <rect x="536" y="122" width="132" height="72" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="602" y="150" text-anchor="middle" font-family="IBM Plex Sans" font-size="12.5" fill="#e0def4">cloudflared</text>
+          <text x="602" y="168" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">outbound only</text>
+          <text x="602" y="183" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">no open port</text>
+
+          <!-- origin -->
+          <rect x="722" y="34" width="222" height="248" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="833" y="58" text-anchor="middle" font-family="IBM Plex Sans" font-size="13" font-weight="600" fill="#e0def4">folio origin</text>
+          <text x="833" y="76" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">127.0.0.1:8082</text>
+          <rect x="740" y="94" width="186" height="52" rx="2" fill="#2a283e" stroke="#eb6f92"/>
+          <text x="833" y="114" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#eb6f92">prefix ↔ visibility</text>
+          <text x="833" y="132" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">mismatch → 404</text>
+          <rect x="740" y="158" width="186" height="52" rx="2" fill="#2a283e" stroke="#56526e"/>
+          <text x="833" y="178" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#e0def4">bearer check</text>
+          <text x="833" y="196" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">on /api/* only</text>
+          <text x="833" y="234" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">path containment</text>
+          <text x="833" y="250" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">+ realpath re-check</text>
+
+          <!-- disk -->
+          <rect x="722" y="366" width="222" height="62" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="833" y="391" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#e0def4">/srv/folio/docs/&lt;id&gt;/</text>
+          <text x="833" y="409" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">index.html · meta.json</text>
+
+          <!-- arrows -->
+          <line x1="192" y1="83" x2="256" y2="105" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="224" y="70" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="#908caa">CF_Authorization</text>
+          <text x="224" y="82" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="#6e6a86">cookie</text>
+
+          <line x1="192" y1="199" x2="256" y2="184" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="224" y="228" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="#908caa">CF-Access-Client-Id</text>
+          <text x="224" y="240" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="#6e6a86">+ Secret · headers</text>
+
+          <line x1="474" y1="158" x2="530" y2="158" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="502" y="148" text-anchor="middle" font-family="IBM Plex Mono" font-size="9.5" fill="#908caa">authorized</text>
+
+          <line x1="668" y1="158" x2="716" y2="158" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar)"/>
+
+          <path d="M192 397 L716 397" stroke="#9ccfd8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar-f)" fill="none"/>
+          <text x="454" y="386" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#9ccfd8">loopback — never leaves the box, never sees Access</text>
+
+          <line x1="833" y1="282" x2="833" y2="360" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar)"/>
+          <text x="843" y="326" font-family="IBM Plex Mono" font-size="9.5" fill="#908caa">read · atomic write</text>
+        </svg>
+      </div>
+      <figcaption><b>Two credentials, two routes, one origin.</b> A browser's cookie is attached automatically by the browser; the CLI's service-token headers are not, and cannot be — which is the property the next two diagrams depend on. Publishing from the box itself bypasses Cloudflare entirely.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="eyebrow">Diagram 02 · The re-check</p>
+    <div class="col">
+      <h2>The origin assumes the edge is wrong</h2>
+      <p>Documents live in one canonical directory, but they are only served under the prefix matching their stored <code>visibility</code>. The <code>/p/*</code> Access policy is a blanket bypass — it lets <em>everyone</em> through, with no idea which document is being asked for. The origin is what stops a private document being fetched there.</p>
+    </div>
+
+    <figure>
+      <div class="figbody">
+        <svg viewBox="0 0 960 322" role="img" aria-label="Two requests to the public prefix. Both are waved through by the same Access bypass policy. At the origin, the public document's stored visibility matches the prefix and returns 200, while the private document's visibility does not match and returns 404.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#908caa"/>
+            </marker>
+          </defs>
+
+          <text x="20" y="26" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">REQUEST</text>
+          <text x="292" y="26" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">CLOUDFLARE ACCESS</text>
+          <text x="566" y="26" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">FOLIO ORIGIN</text>
+          <text x="872" y="26" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">RESULT</text>
+          <line x1="20" y1="36" x2="940" y2="36" stroke="#44415a"/>
+
+          <!-- lane A -->
+          <rect x="20" y="60" width="240" height="66" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="36" y="88" font-family="IBM Plex Mono" font-size="12" fill="#9ccfd8">GET /p/openone</text>
+          <text x="36" y="108" font-family="IBM Plex Mono" font-size="10" fill="#908caa">visibility: public</text>
+
+          <rect x="292" y="60" width="220" height="66" rx="3" fill="#2a283e" stroke="#56526e"/>
+          <text x="402" y="88" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#e0def4">/p/* → bypass</text>
+          <text x="402" y="107" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">allows everyone</text>
+
+          <rect x="566" y="60" width="240" height="66" rx="3" fill="#2a273f" stroke="#9ccfd8"/>
+          <text x="686" y="88" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#e0def4">public == /p/</text>
+          <text x="686" y="107" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#9ccfd8">match</text>
+
+          <text x="872" y="99" font-family="IBM Plex Mono" font-size="18" fill="#9ccfd8">200</text>
+
+          <line x1="260" y1="93" x2="286" y2="93" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+          <line x1="512" y1="93" x2="560" y2="93" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+          <line x1="806" y1="93" x2="860" y2="93" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+          <!-- lane B -->
+          <rect x="20" y="176" width="240" height="66" rx="3" fill="#2a273f" stroke="#44415a"/>
+          <text x="36" y="204" font-family="IBM Plex Mono" font-size="12" fill="#eb6f92">GET /p/secret</text>
+          <text x="36" y="224" font-family="IBM Plex Mono" font-size="10" fill="#908caa">visibility: private</text>
+
+          <rect x="292" y="176" width="220" height="66" rx="3" fill="#2a283e" stroke="#56526e"/>
+          <text x="402" y="204" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#e0def4">/p/* → bypass</text>
+          <text x="402" y="223" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#f6c177">same policy · still allows</text>
+
+          <rect x="566" y="176" width="240" height="66" rx="3" fill="#2a273f" stroke="#eb6f92"/>
+          <text x="686" y="204" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#e0def4">private != /p/</text>
+          <text x="686" y="223" text-anchor="middle" font-family="IBM Plex Mono" font-size="10.5" fill="#eb6f92">refuse</text>
+
+          <text x="872" y="215" font-family="IBM Plex Mono" font-size="18" fill="#eb6f92">404</text>
+
+          <line x1="260" y1="209" x2="286" y2="209" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+          <line x1="512" y1="209" x2="560" y2="209" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+          <line x1="806" y1="209" x2="860" y2="209" stroke="#908caa" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+          <line x1="20" y1="276" x2="940" y2="276" stroke="#44415a" stroke-dasharray="3 3"/>
+          <text x="20" y="300" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">The edge behaved identically in both lanes. Everything that differs happens at the origin.</text>
+        </svg>
+      </div>
+      <figcaption><b>404, not 403.</b> A mismatch is indistinguishable from a document that was never there, so the response can't be used to enumerate which private ids exist. Deliberately breaking this one function makes 8 of the 43 tests fail.</figcaption>
+    </figure>
+
+    <div class="col">
+      <div class="note danger">
+        <span class="lab">Ordering hazard</span>
+        <p>The origin does not authenticate <em>reads</em> at all — it only checks that a document belongs at the requested path. If the DNS record exists before the Access applications do, <code>/a/*</code> and <code>/</code> are readable by anyone who knows the hostname. Create the policies first; they can exist before the record does.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Diagram 03 · Isolation</p>
+    <div class="col">
+      <h2>Why one origin is enough</h2>
+      <p>Every serious self-hosted artifact host — <span style="color:var(--subtle)">artifact-server, ArtifactFlow</span> — puts documents on wildcard subdomains so one document cannot read another or call the API. folio keeps a single origin and buys the same isolation with a header.</p>
+      <p>Documents are served under <code>Content-Security-Policy: sandbox allow-scripts</code>. Crucially, <strong>without</strong> <code>allow-same-origin</code> — which drops the document into an <em>opaque</em> origin. It has no origin, so there is nothing to share.</p>
+    </div>
+
+    <figure>
+      <div class="figbody">
+        <svg viewBox="0 0 960 350" role="img" aria-label="Within the single folio.kz3.dev origin, the API and index hold the session cookie. Each document runs in an opaque origin created by the CSP sandbox directive, so a document's script cannot reach the API, cannot read another document's storage, and cannot register a service worker.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#eb6f92"/>
+            </marker>
+          </defs>
+
+          <rect x="16" y="20" width="928" height="264" rx="4" fill="none" stroke="#44415a" stroke-dasharray="5 4"/>
+          <text x="34" y="44" font-family="IBM Plex Mono" font-size="11" fill="#908caa">origin  folio.kz3.dev</text>
+
+          <!-- trusted -->
+          <rect x="40" y="66" width="230" height="86" rx="3" fill="#2a273f" stroke="#c4a7e7"/>
+          <text x="155" y="94" text-anchor="middle" font-family="IBM Plex Sans" font-size="12.5" fill="#e0def4">/api/*  ·  index</text>
+          <text x="155" y="114" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#c4a7e7">holds CF_Authorization</text>
+          <text x="155" y="132" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">+ bearer required</text>
+
+          <!-- docs -->
+          <rect x="360" y="66" width="250" height="86" rx="3" fill="#2a273f" stroke="#9ccfd8"/>
+          <text x="485" y="90" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#9ccfd8">/p/doc-a</text>
+          <text x="485" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">opaque origin</text>
+          <text x="485" y="130" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">no cookies · no storage</text>
+
+          <rect x="672" y="66" width="250" height="86" rx="3" fill="#2a273f" stroke="#9ccfd8"/>
+          <text x="797" y="90" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#9ccfd8">/p/doc-b</text>
+          <text x="797" y="112" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#908caa">opaque origin</text>
+          <text x="797" y="130" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">separate from doc-a</text>
+
+          <!-- blocked arrows -->
+          <path d="M360 196 L286 196" stroke="#eb6f92" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar3)" fill="none"/>
+          <path d="M316 188 L330 204 M330 188 L316 204" stroke="#eb6f92" stroke-width="1.6"/>
+          <text x="323" y="230" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#eb6f92">fetch('/api/…')</text>
+          <text x="323" y="245" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">no cookie to ride</text>
+
+          <path d="M610 196 L666 196" stroke="#eb6f92" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar3)" fill="none"/>
+          <path d="M631 188 L645 204 M645 188 L631 204" stroke="#eb6f92" stroke-width="1.6"/>
+          <text x="638" y="230" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#eb6f92">read doc-b</text>
+          <text x="638" y="245" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">different opaque origin</text>
+
+          <line x1="485" y1="152" x2="485" y2="188" stroke="#eb6f92" stroke-width="1.3" stroke-dasharray="4 3"/>
+          <path d="M478 192 L492 208 M492 192 L478 208" stroke="#eb6f92" stroke-width="1.6"/>
+          <text x="485" y="230" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#eb6f92">register service worker</text>
+          <text x="485" y="245" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#6e6a86">blocked in opaque origins</text>
+
+          <text x="34" y="312" font-family="IBM Plex Mono" font-size="10.5" fill="#908caa">Even if a document escaped the sandbox, /api/* needs service-token <tspan fill="#e0def4">headers</tspan> — which a browser never attaches on its own.</text>
+        </svg>
+      </div>
+      <figcaption><b>The header does the work the wildcard would have done.</b> The cost is real and worth knowing: <code>localStorage</code> throws inside an opaque origin, so documents that persist state break. <code>meta.json</code> carries a per-document <code>sandbox: false</code> escape hatch for pages you have read and trust.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="eyebrow">Model</p>
+    <div class="col"><h2>Visibility is the URL</h2>
+    <p>Changing who can see a document moves it between prefixes. The link changes with it — which means un-publishing genuinely kills the old link rather than leaving a URL you believe is private.</p></div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Prefix</th><th>Access policy</th><th>Who gets in</th><th>Set by</th></tr></thead>
+        <tbody>
+          <tr><td><code class="tier-p">/p/&lt;id&gt;</code></td><td>Bypass</td><td>anyone with the link</td><td><code>folio share id --public</code></td></tr>
+          <tr><td><code class="tier-t">/t/&lt;id&gt;</code></td><td>Allow · listed emails</td><td>named people, after login</td><td><code>folio share id --with a@b.com</code></td></tr>
+          <tr><td><code class="tier-a">/a/&lt;id&gt;</code></td><td>Allow · owner</td><td>you only</td><td><code>folio share id --private</code></td></tr>
+          <tr><td><code>/api/*</code></td><td>Service Auth</td><td>token holders, no humans</td><td>—</td></tr>
+          <tr><td><code>/</code></td><td>Allow · owner (catch-all)</td><td>you only</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <div class="note">
+        <span class="lab">Worth remembering</span>
+        <p><code>shared_with</code> in <code>meta.json</code> is display metadata. The real guest list is the Access policy on <code>/t/*</code> — editing the JSON revokes nobody.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Storage</p>
+    <div class="col"><h2>The filesystem is the database</h2>
+    <p>No Postgres, no SQLite, no migrations. A document is a directory; backup is <code>tar</code>; inspection is <code>cat</code>. Writes go to a temp file and are moved into place, so a crash mid-write can't leave a half-document.</p></div>
+<pre><b>/srv/folio/docs/</b>
+├── welcome/
+│   ├── <b>index.html</b>      <i>the document, served verbatim</i>
+│   └── <b>meta.json</b>       <i>visibility, title, sha256, timestamps</i>
+└── q3-report/
+    ├── index.html
+    ├── meta.json
+    └── assets/          <i>optional, containment-checked on every read</i></pre>
+  </section>
+
+  <section>
+    <p class="eyebrow">Verification</p>
+    <div class="col"><h2>What was actually proven</h2>
+    <p>A passing suite means nothing if it cannot fail, so the check that mattered was breaking the code on purpose: forcing the visibility function to always return <code>true</code> turned 8 tests red. Independently, the tests were written from the spec by a separate agent that never read the implementation.</p>
+    <p>Everything below was then re-verified against the live hostname, through Cloudflare, rather than only on loopback.</p></div>
+
+    <ul class="plain">
+      <li><span class="tick">✓</span><span><strong>43/43 tests</strong>, including 23 traversal payloads — literal, percent-encoded, double-encoded, backslash, empty-segment</span></li>
+      <li><span class="tick">✓</span><span><strong>Symlink escape</strong> — <code>/etc/passwd</code> linked into a document directory returns 404, verified against a live server</span></li>
+      <li><span class="tick">✓</span><span><strong>A real bug caught in build</strong> — <code>new URL()</code> silently collapses <code>..</code>, so <code>/a/doc/../neighbour/</code> once returned 200; parsing now works on the raw target</span></li>
+      <li><span class="tick">✓</span><span><strong>Crash recovery</strong> — <code>SIGKILL</code> the process, healthy again in under 4 seconds</span></li>
+      <li><span class="tick">✓</span><span><strong>Install is idempotent</strong> — three runs, token never rotated, documents never touched</span></li>
+      <li><span class="tick">✓</span><span><strong>The edge chain, live</strong> — unauthenticated <code>/</code> and <code>/a/*</code> return 302 to Access; <code>/api/*</code> returns 403 to a browser; <code>babel.kz3.dev</code> unaffected</span></li>
+      <li><span class="tick">✓</span><span><strong>The re-check survives the real edge</strong> — <code>/p/&lt;private-doc&gt;</code> returns 404 through Cloudflare: the bypass policy passed the request, the origin refused it</span></li>
+      <li><span class="tick">✓</span><span><strong>Both layers are independent</strong> — a valid service token <em>without</em> the origin bearer gets 401; neither check alone is sufficient</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <p class="eyebrow">Operations</p>
+    <div class="col"><h2>Running it</h2></div>
+<pre><b>folio publish</b> report.html --id q3 --title "Q3 report" --private
+<b>folio share</b> q3 --public          <i># moves it to /p/q3</i>
+<b>folio list</b>
+<b>folio rm</b> q3
+
+systemctl status folio
+journalctl -u folio -f
+sudo tar czf folio-docs-$(date +%F).tar.gz -C /srv/folio docs</pre>
+    <div class="col">
+      <h3>Hardening in force</h3>
+      <p>Verified live, not merely declared: runs as the unprivileged <code>folio</code> user with <code>ProtectSystem=strict</code>, <code>NoNewPrivileges</code>, an empty capability set, <code>SystemCallFilter=@system-service</code>, <code>MemoryMax=512M</code>, and the application directory read-only — only <code>docs/</code> is writable.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Known gaps</p>
+    <div class="col">
+      <h2>What it deliberately doesn't do</h2>
+      <ul class="plain">
+        <li><span class="cross">○</span><span><strong>No versioning.</strong> Publishing over a document replaces it. The layout makes <code>a/&lt;id&gt;/v&lt;n&gt;/</code> cheap to add — much cheaper before there are documents worth keeping.</span></li>
+        <li><span class="cross">○</span><span><strong>No comments, projects or review.</strong> That's the trade against artifact-server, which has all three and wanted a wildcard domain in exchange.</span></li>
+        <li><span class="cross">○</span><span><strong>No user accounts.</strong> Access is the only identity system, which is exactly why the service is small enough to read in one sitting.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>folio</span><span>·</span>
+    <span>3,052 lines</span><span>·</span>
+    <span>0 runtime dependencies</span><span>·</span>
+    <span>Node 22 · Ubuntu 24.04 ARM · Oracle Cloud</span><span>·</span>
+    <span>Rosé Pine Moon</span>
+  </footer>
+
+</div>
+</body>
+</html>
