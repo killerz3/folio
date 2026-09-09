@@ -1,5 +1,7 @@
 # folio
 
+![One document, three gateways: a server on the left feeds a single sheet of paper through an open teal gate, a half-closed amber gate, and a locked indigo gate — public, shared and private.](assets/banner.jpg)
+
 A small, self-hosted host for one-page HTML artifacts — reports, dashboards,
 mockups, anything that is a single `index.html` plus maybe some assets.
 
