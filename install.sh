@@ -206,7 +206,7 @@ Next manual steps
        sudo systemctl restart cloudflared
 
 2. DNS + Cloudflare Access — follow deploy/ACCESS.md click-by-click:
-     * one proxied CNAME  folio -> e56d9ee8-37a7-4a22-bbbe-03668982baf7.cfargotunnel.com
+     * one proxied CNAME  folio -> <tunnel-id>.cfargotunnel.com
      * four Access applications (/api/* service auth, /p/* bypass,
        /t/* allow-listed emails, /* owner only)
 

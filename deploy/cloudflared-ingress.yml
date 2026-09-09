@@ -21,7 +21,7 @@
 
 # ---------------------------------------------------------------------------
 # For reference, the resulting ingress section of /etc/cloudflared/config.yml
-# for tunnel e56d9ee8-37a7-4a22-bbbe-03668982baf7 should read:
+# for tunnel <tunnel-id> should read:
 #
 # ingress:
 #   - hostname: babel.kz3.dev

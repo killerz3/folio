@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # folio — create Access applications + DNS record via the Cloudflare API.
+# Required environment:
+#   FOLIO_TUNNEL_ID    cloudflared tunnel id  (cloudflared tunnel list)
+#   FOLIO_OWNER_EMAIL  address allowed to reach private documents
 # Reads the API token from ~/.config/cf-api-token (never an argument, never logged).
 # Order is deliberate: every Access policy is created BEFORE the DNS record exists.
 set -euo pipefail
 
 ZONE=kz3.dev
 FQDN=folio.kz3.dev
-TUNNEL=e56d9ee8-37a7-4a22-bbbe-03668982baf7
-OWNER=shubhchaudhary1203@gmail.com
+TUNNEL="${FOLIO_TUNNEL_ID:?set FOLIO_TUNNEL_ID to your cloudflared tunnel id (cloudflared tunnel list)}"
+OWNER="${FOLIO_OWNER_EMAIL:?set FOLIO_OWNER_EMAIL to the address that may reach private docs}"
 TOKEN_FILE="${CF_TOKEN_FILE:-$HOME/.config/cf-api-token}"
 API=https://api.cloudflare.com/client/v4
 

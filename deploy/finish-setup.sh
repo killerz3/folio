@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# folio — one-shot privileged setup. Run with: sudo ~/folio/deploy/finish-setup.sh
+# folio — one-shot privileged setup.
+# sudo drops the environment, so pass the tunnel id through it explicitly:
+#   sudo FOLIO_TUNNEL_ID=<tunnel-id> ~/folio/deploy/finish-setup.sh
+# Find yours with: cloudflared tunnel list
 # Idempotent. Safe to re-run. Never touches the babel ingress rule or your documents.
 set -euo pipefail
 
-TUNNEL_ID=e56d9ee8-37a7-4a22-bbbe-03668982baf7
+TUNNEL_ID="${FOLIO_TUNNEL_ID:?set FOLIO_TUNNEL_ID to your cloudflared tunnel id (cloudflared tunnel list)}"
 CF_CONFIG=/etc/cloudflared/config.yml
 HOSTNAME_FQDN=folio.kz3.dev
 PORT=8082

@@ -1,7 +1,7 @@
 # folio — Cloudflare DNS + Access setup
 
 Click-by-click setup for `folio.kz3.dev` on tunnel
-`e56d9ee8-37a7-4a22-bbbe-03668982baf7`.
+`<tunnel-id>`.
 
 Do this **after** `sudo ./install.sh` has run and the tunnel ingress snippet
 (`deploy/cloudflared-ingress.yml`) is in `/etc/cloudflared/config.yml`.
@@ -23,7 +23,7 @@ Two different dashboards are involved:
 4. Fill in exactly:
    - **Type**: `CNAME`
    - **Name**: `folio`  ← just the label, not `folio.kz3.dev`
-   - **Target**: `e56d9ee8-37a7-4a22-bbbe-03668982baf7.cfargotunnel.com`
+   - **Target**: `<tunnel-id>.cfargotunnel.com`
    - **Proxy status**: **Proxied** (the cloud toggle must be **orange**).
      A grey/DNS-only record cannot resolve a `.cfargotunnel.com` target and
      will fail — this is the single most common mistake here.
@@ -33,7 +33,7 @@ Two different dashboards are involved:
 Equivalent from the shell on the tunnel host, if you prefer:
 
 ```sh
-sudo cloudflared tunnel route dns e56d9ee8-37a7-4a22-bbbe-03668982baf7 folio.kz3.dev
+sudo cloudflared tunnel route dns <tunnel-id> folio.kz3.dev
 ```
 
 Verify:
@@ -160,7 +160,7 @@ policy here cannot leak a private document — a private id at `/p/` is a 404.
   - **Policy name**: `shared viewers`
   - **Action**: **Allow**
   - **Include** → selector **Emails** → add each address on its own line,
-    e.g. `shubhchaudhary1203@gmail.com`, plus whoever you are sharing with
+    e.g. `<your-email>`, plus whoever you are sharing with
   - (For a whole company, use **Emails ending in** → `@example.com` instead.)
 
 Viewers get a one-time PIN / identity-provider login at the edge. Editing the
@@ -173,7 +173,7 @@ metadata for the index page and does **not** enforce anything by itself.
 - Policy:
   - **Policy name**: `owner`
   - **Action**: **Allow**
-  - **Include** → selector **Emails** → `shubhchaudhary1203@gmail.com`
+  - **Include** → selector **Emails** → `<your-email>`
 
 This is what protects the index page at `/` and every private document under
 `/a/*`.
