@@ -1,0 +1,97 @@
+#!/usr/bin/env node
+// folio-sync — mirror every published folio doc into a git repo and push it.
+// One commit per changed doc, dated at the doc's `updated` time, so the
+// history reads as a publish log. Zero dependencies, like bin/folio.
+//
+//   FOLIO_SYNC_REPO   local clone to write into (default ~/folio-docs)
+//   FOLIO_URL/TOKEN   same as bin/folio, else ~/.config/folio/config.json
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+
+const PREFIX = { public: 'p', shared: 't', private: 'a' };
+const REPO = process.env.FOLIO_SYNC_REPO || path.join(os.homedir(), 'folio-docs');
+const DOCS = path.join(REPO, 'docs');
+
+function config() {
+  let file = {};
+  try {
+    file = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.config/folio/config.json'), 'utf8'));
+  } catch {}
+  const url = (process.env.FOLIO_URL || file.url || 'http://127.0.0.1:8082').replace(/\/+$/, '');
+  const token = process.env.FOLIO_TOKEN || file.token;
+  if (!token) throw new Error('no FOLIO_TOKEN and no token in ~/.config/folio/config.json');
+  return { url, token };
+}
+
+function git(args, env = {}) {
+  return execFileSync('git', ['-C', REPO, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function readLocalMeta(id) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DOCS, id, 'meta.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function commit(message, date) {
+  if (!git(['status', '--porcelain'])) return false;
+  const env = date ? { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } : {};
+  git(['commit', '-q', '-m', message], env);
+  return true;
+}
+
+async function main() {
+  const { url, token } = config();
+  const res = await fetch(`${url}/api/a`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`GET /api/a -> ${res.status}`);
+  const docs = (await res.json()).sort((a, b) => a.updated.localeCompare(b.updated));
+  fs.mkdirSync(DOCS, { recursive: true });
+
+  let commits = 0;
+  for (const doc of docs) {
+    const local = readLocalMeta(doc.id);
+    if (local && JSON.stringify(local) === JSON.stringify(doc)) continue;
+
+    const dir = path.join(DOCS, doc.id);
+    fs.mkdirSync(dir, { recursive: true });
+    const contentChanged = !local || local.sha256 !== doc.sha256;
+    if (contentChanged) {
+      const page = await fetch(`${url}/${PREFIX[doc.visibility]}/${doc.id}`);
+      if (!page.ok) throw new Error(`GET ${doc.id} -> ${page.status}`);
+      const body = Buffer.from(await page.arrayBuffer());
+      const sha = crypto.createHash('sha256').update(body).digest('hex');
+      // Re-published between the list and the fetch: pick it up next run.
+      if (sha !== doc.sha256) continue;
+      fs.writeFileSync(path.join(dir, 'index.html'), body);
+    }
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(doc, null, 2) + '\n');
+    git(['add', '--', path.join('docs', doc.id)]);
+    const verb = !local ? 'publish' : contentChanged ? 'update' : 'edit meta of';
+    if (commit(`${verb} ${doc.id}: ${doc.title}`, doc.updated)) commits++;
+  }
+
+  const live = new Set(docs.map((d) => d.id));
+  for (const id of fs.readdirSync(DOCS)) {
+    if (live.has(id)) continue;
+    git(['rm', '-rq', '--', path.join('docs', id)]);
+    if (commit(`remove ${id}`)) commits++;
+  }
+
+  if (commits > 0) git(['push', '-q', 'origin', 'HEAD']);
+  console.log(`folio-sync: ${docs.length} docs, ${commits} new commit(s)`);
+}
+
+main().catch((err) => {
+  console.error(`folio-sync: ${err.message}`);
+  process.exit(1);
+});
