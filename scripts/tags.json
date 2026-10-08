@@ -1,0 +1,16 @@
+{
+  "agent-browser": { "folder": "build-log", "tags": ["browser-automation", "agents", "self-hosted", "open-source"] },
+  "architecture": { "folder": "architecture", "tags": ["self-hosted", "identity-gating", "edge-routing"] },
+  "debt-exit-plan": { "folder": "personal-finance", "tags": ["loan-exit-plan", "plan-comparison", "debt-strategy"] },
+  "discord-threads": { "folder": "architecture", "tags": ["discord-bot", "daemon", "sessions", "slash-commands"] },
+  "folio-doc-skill": { "folder": "meta", "tags": ["folio-skill", "publishing", "claude-code", "documentation"] },
+  "jevalyzer-report": { "folder": "reports", "tags": ["model-performance", "benchmarking", "jev-scoring"] },
+  "jevalyzer": { "folder": "product", "tags": ["agent-grading", "open-source", "cli-tool"] },
+  "linkedin-discord-threads": { "folder": "marketing", "tags": ["linkedin", "discord-threads", "social-media", "how-to"] },
+  "ridealong": { "folder": "product", "tags": ["browser", "ai-agents", "open-source", "shared-workspace"] },
+  "rooney-build": { "folder": "build-log", "tags": ["budget-aware", "infrastructure", "full-stack"] },
+  "rooney": { "folder": "architecture", "tags": ["oracle-cloud", "multi-account", "zero-cost"] },
+  "round3-prep": { "folder": "interview-prep", "tags": ["system-design", "round-3", "hiring-manager"] },
+  "welcome": { "folder": "meta", "tags": ["folio-system", "self-hosted", "artifact-host", "visibility"] },
+  "wingify-search-recs-prep": { "folder": "interview-prep", "tags": ["system-design", "product-discovery", "search-reco"] }
+}

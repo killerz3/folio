@@ -393,7 +393,7 @@ test('9. index page escapes <script> and other markup in doc titles', async () =
   ok((await publish(S, 'xss1', '<p>x</p>', { title: xss, visibility: 'public' })).status, 'PUT xss1');
   ok((await publish(S, 'xss2', '<p>x</p>', { title: img, visibility: 'private' })).status, 'PUT xss2');
 
-  const res = await raw(S, 'GET', '/');
+  const res = await raw(S, 'GET', '/main');
   assert.equal(res.status, 200);
   assert.match(String(res.headers['content-type']), /text\/html/);
 
@@ -406,7 +406,7 @@ test('9. index page escapes <script> and other markup in doc titles', async () =
 });
 
 test('9. index page carries the strict CSP and no external requests', async () => {
-  const res = await raw(S, 'GET', '/');
+  const res = await raw(S, 'GET', '/main');
   const csp = String(res.headers['content-security-policy'] || '');
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /style-src 'self' 'unsafe-inline'/);
@@ -416,4 +416,64 @@ test('9. index page carries the strict CSP and no external requests', async () =
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(res.body),
     'index must not load external resources');
   assert.ok(!/@import/i.test(res.body), 'index must not @import a stylesheet');
+});
+
+/* --------------------------------------- new: / vs /main, folder/tags --- */
+
+test('10. GET / is the public product page, not the document index', async () => {
+  ok((await publish(S, 'landing-probe', '<p>x</p>', { visibility: 'public' })).status, 'PUT landing-probe');
+  const res = await raw(S, 'GET', '/');
+  assert.equal(res.status, 200);
+  assert.match(String(res.headers['content-type']), /text\/html/);
+  assert.match(res.body, /folio/i);
+  assert.ok(!res.body.includes('landing-probe'), 'the landing page must not list documents');
+  assert.match(String(res.headers['cache-control']), /public, max-age/, 'cache-control should be set explicitly');
+});
+
+test('10. GET /main lists documents and is unaffected by the split', async () => {
+  const res = await raw(S, 'GET', '/main');
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes('landing-probe'), '/main must list documents');
+});
+
+test('10. folder and tags round-trip through PUT query and PATCH', async () => {
+  const put = await publish(S, 'tagged-doc', '<p>x</p>', { visibility: 'public' });
+  ok(put.status, 'PUT tagged-doc');
+
+  const afterPut = await raw(S, 'PUT', '/api/a/tagged-doc?folder=product&tags=open-source,cli', {
+    headers: { ...auth, 'content-type': 'text/html; charset=utf-8', 'content-length': '8' },
+    body: Buffer.from('<p>y</p>'),
+  });
+  const metaAfterPut = JSON.parse(afterPut.body);
+  assert.equal(metaAfterPut.folder, 'product');
+  assert.deepEqual(metaAfterPut.tags, ['open-source', 'cli']);
+
+  const patched = await patch(S, 'tagged-doc', { folder: 'architecture', tags: ['edge-routing'] });
+  const metaAfterPatch = JSON.parse(patched.body);
+  assert.equal(metaAfterPatch.folder, 'architecture');
+  assert.deepEqual(metaAfterPatch.tags, ['edge-routing']);
+
+  const listed = JSON.parse((await raw(S, 'GET', '/api/a', { headers: auth })).body);
+  const found = listed.find((d) => d.id === 'tagged-doc');
+  assert.equal(found.folder, 'architecture');
+  assert.deepEqual(found.tags, ['edge-routing']);
+
+  const index = await raw(S, 'GET', '/main');
+  assert.match(index.body, /class="doc f-architecture t-edge-routing"/);
+});
+
+test('10. invalid folder/tags are rejected with 400, never silently dropped', async () => {
+  ok((await publish(S, 'bad-tag-doc', '<p>x</p>', { visibility: 'public' })).status, 'PUT bad-tag-doc');
+
+  const badFolder = await patch(S, 'bad-tag-doc', { folder: 'Not Valid!' });
+  assert.equal(badFolder.status, 400);
+
+  const badTags = await patch(S, 'bad-tag-doc', { tags: ['ok', 'also bad'] });
+  assert.equal(badTags.status, 400);
+
+  const badQuery = await raw(S, 'PUT', '/api/a/bad-tag-doc?folder=UPPERCASE', {
+    headers: { ...auth, 'content-type': 'text/html; charset=utf-8', 'content-length': '8' },
+    body: Buffer.from('<p>z</p>'),
+  });
+  assert.equal(badQuery.status, 400);
 });

@@ -20,9 +20,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { AccessVerifier, AuthError, checkBearer, isLoopback, TEAM_RE } from './auth.js';
-import { renderIndex } from './render.js';
+import { renderIndex, renderLanding } from './render.js';
 import {
   PREFIX_TO_VISIBILITY,
+  SLUG_RE,
   Store,
   StoreError,
   VISIBILITIES,
@@ -38,6 +39,7 @@ const SHUTDOWN_GRACE_MS = 10000;
 const SANDBOX_CSP = "sandbox allow-scripts allow-popups allow-forms allow-modals; worker-src 'none'";
 const NO_SANDBOX_CSP = "worker-src 'none'";
 const INDEX_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:";
+const LANDING_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:";
 const API_CSP = "default-src 'none'";
 
 class HttpError extends Error {
@@ -365,6 +367,23 @@ function putOptions(query, headers) {
     opts.visibility = visibility;
   }
 
+  const folder = query.get('folder');
+  if (folder !== null) {
+    if (folder !== '' && !SLUG_RE.test(folder)) {
+      throw new HttpError(400, 'bad_request', 'folder must be a slug matching /^[a-z0-9][a-z0-9-]{0,31}$/');
+    }
+    opts.folder = folder === '' ? null : folder;
+  }
+
+  const tags = query.get('tags');
+  if (tags !== null) {
+    const list = tags.split(',').map((t) => t.trim()).filter(Boolean);
+    if (list.some((t) => !SLUG_RE.test(t))) {
+      throw new HttpError(400, 'bad_request', 'tags must be comma-separated slugs matching /^[a-z0-9][a-z0-9-]{0,31}$/');
+    }
+    opts.tags = list;
+  }
+
   const sandbox = query.get('sandbox');
   if (sandbox !== null) {
     const parsed = parseBoolean(sandbox);
@@ -392,6 +411,18 @@ function applyMetaChanges(body) {
       throw new HttpError(400, 'bad_request', 'shared_with must be an array of strings');
     }
     changes.shared_with = body.shared_with;
+  }
+  if (body.folder !== undefined) {
+    if (body.folder !== null && (typeof body.folder !== 'string' || !SLUG_RE.test(body.folder))) {
+      throw new HttpError(400, 'bad_request', 'folder must be null or a slug matching /^[a-z0-9][a-z0-9-]{0,31}$/');
+    }
+    changes.folder = body.folder;
+  }
+  if (body.tags !== undefined) {
+    if (!Array.isArray(body.tags) || body.tags.some((v) => typeof v !== 'string' || !SLUG_RE.test(v))) {
+      throw new HttpError(400, 'bad_request', 'tags must be an array of slugs matching /^[a-z0-9][a-z0-9-]{0,31}$/');
+    }
+    changes.tags = body.tags;
   }
   if (body.sandbox !== undefined) {
     if (typeof body.sandbox !== 'boolean') throw new HttpError(400, 'bad_request', 'sandbox must be a boolean');
@@ -527,7 +558,8 @@ export function createApp(config, deps = {}) {
     }
   }
 
-  async function handleIndex(req, res) {
+  /** GET /main — the document index: every doc, folder/tag browsable. Owner only. */
+  async function handleMain(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       throw new HttpError(405, 'method_not_allowed', 'method not allowed');
     }
@@ -544,6 +576,26 @@ export function createApp(config, deps = {}) {
     res.end(body);
   }
 
+  /**
+   * GET / — the public product page. Static marketing content, no document
+   * listing, no store access, no Access check: it is meant to be reachable
+   * by anyone (see deploy/ACCESS.md for the matching edge Bypass policy).
+   */
+  async function handleLanding(req, res) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      throw new HttpError(405, 'method_not_allowed', 'method not allowed');
+    }
+    const body = Buffer.from(renderLanding(), 'utf8');
+    res.writeHead(200, baseHeaders({
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': body.length,
+      'cache-control': 'public, max-age=300',
+      'content-security-policy': LANDING_CSP,
+    }));
+    if (req.method === 'HEAD') return void res.end();
+    res.end(body);
+  }
+
   async function route(req, res) {
     const parsed = parsePath(req.url || '/');
     if (!parsed) throw new HttpError(400, 'bad_request', 'malformed request path');
@@ -555,7 +607,8 @@ export function createApp(config, deps = {}) {
       }
       return sendText(res, 200, 'ok');
     }
-    if (segments.length === 0) return handleIndex(req, res);
+    if (segments.length === 0) return handleLanding(req, res);
+    if (segments.length === 1 && segments[0] === 'main') return handleMain(req, res);
     if (segments[0] === 'api') {
       if (segments[1] !== 'a' || segments.length < 2) throw new HttpError(404, 'not_found', 'not found');
       return handleApi(req, res, segments, badIndex, query);

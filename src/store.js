@@ -38,6 +38,11 @@ export const MAX_TITLE_LENGTH = 300;
 export const MAX_SHARED_WITH = 128;
 export const MAX_SHARED_WITH_LENGTH = 320;
 
+/** SECURITY CRITICAL: folder/tag values become CSS classes and HTML ids on
+ * the /main index, so they are restricted to a tight slug alphabet. */
+export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+export const MAX_TAGS = 16;
+
 const CONTROL_CHARS = new RegExp('[\\x00-\\x1F\\x7F]', 'g');
 const NUL = String.fromCharCode(0);
 
@@ -167,6 +172,29 @@ function clampTitle(value, fallback) {
   return cleaned.slice(0, MAX_TITLE_LENGTH);
 }
 
+/** A single folder slug, or null. Invalid input is dropped, never thrown. */
+function cleanFolder(value, fallback) {
+  if (value === null) return null;
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim().toLowerCase();
+  if (v.length === 0) return null;
+  return SLUG_RE.test(v) ? v : fallback;
+}
+
+/** Subtag slugs: de-duplicated, capped, each validated independently. */
+function cleanTags(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const seen = new Set();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const v = entry.trim().toLowerCase();
+    if (!SLUG_RE.test(v)) continue;
+    seen.add(v);
+    if (seen.size >= MAX_TAGS) break;
+  }
+  return [...seen];
+}
+
 function cleanSharedWith(value, fallback) {
   if (!Array.isArray(value)) return fallback;
   const out = [];
@@ -192,6 +220,8 @@ export function normalizeMeta(raw, id) {
     title: clampTitle(meta.title, id),
     visibility: isVisibility(meta.visibility) ? meta.visibility : DEFAULT_VISIBILITY,
     shared_with: cleanSharedWith(meta.shared_with, []),
+    folder: cleanFolder(meta.folder, null),
+    tags: cleanTags(meta.tags, []),
     sandbox: meta.sandbox === false ? false : true,
     created: typeof meta.created === 'string' ? meta.created : now,
     updated: typeof meta.updated === 'string' ? meta.updated : now,
@@ -338,6 +368,8 @@ export class Store {
       title: opts.title !== undefined ? opts.title : prev?.title ?? id,
       visibility: opts.visibility !== undefined ? opts.visibility : prev?.visibility ?? DEFAULT_VISIBILITY,
       shared_with: opts.shared_with !== undefined ? opts.shared_with : prev?.shared_with ?? [],
+      folder: opts.folder !== undefined ? opts.folder : prev?.folder ?? null,
+      tags: opts.tags !== undefined ? opts.tags : prev?.tags ?? [],
       sandbox: opts.sandbox !== undefined ? opts.sandbox : prev?.sandbox ?? true,
       created: prev?.created ?? now,
       updated: now,
@@ -361,6 +393,8 @@ export class Store {
       ...(changes.title !== undefined ? { title: changes.title } : {}),
       ...(changes.visibility !== undefined ? { visibility: changes.visibility } : {}),
       ...(changes.shared_with !== undefined ? { shared_with: changes.shared_with } : {}),
+      ...(changes.folder !== undefined ? { folder: changes.folder } : {}),
+      ...(changes.tags !== undefined ? { tags: changes.tags } : {}),
       ...(changes.sandbox !== undefined ? { sandbox: changes.sandbox } : {}),
       updated: new Date().toISOString(),
     }, id);

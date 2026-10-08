@@ -8,6 +8,7 @@ import path from 'node:path';
 
 const VERSION = '1.0.0';
 const ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const PREFIX = { public: 'p', shared: 't', private: 'a' };
 const DEFAULT_URL = 'http://127.0.0.1:8082';
 
@@ -15,10 +16,11 @@ const USAGE = `folio — publish HTML artifacts to a folio host
 
 usage:
   folio publish <file> [--id ID] [--title T] [--public|--shared|--private]
-                       [--no-sandbox] [--json]
+                       [--folder F] [--tag T]... [--no-sandbox] [--json]
   folio list [--json]
   folio show <id> [--json]
   folio share <id> (--public|--shared|--private) [--with EMAIL]... [--json]
+  folio tag <id> [--folder F] [--tag T]... [--clear-tags] [--json]
   folio rm <id> [--json]
   folio login [--url URL] [--token TOKEN]
   folio help | --help | -h
@@ -30,9 +32,14 @@ options:
   --public         serve at /p/<id>
   --shared         serve at /t/<id>
   --private        serve at /a/<id>   (default for publish)
+  --folder F       folder slug for /main browsing, e.g. product, build-log
+  --tag T          a subtag slug (repeatable: --tag a --tag b)
+  --clear-tags     remove all subtags (folio tag only)
   --no-sandbox     drop the CSP sandbox directive for this doc
   --with EMAIL     grant an address access (repeatable, use with --shared)
   --json           machine-readable output on stdout
+
+folder/tag values must match /^[a-z0-9][a-z0-9-]{0,31}$/ (lowercase slugs).
 
 config:
   FOLIO_URL    host base url   (default ${DEFAULT_URL})
@@ -230,6 +237,13 @@ function checkId(id) {
   return id;
 }
 
+function checkSlug(value, what) {
+  if (!SLUG_RE.test(value)) {
+    throw usageError(`invalid ${what} ${JSON.stringify(value)} — must match /^[a-z0-9][a-z0-9-]{0,31}$/`);
+  }
+  return value;
+}
+
 function docUrl(cfg, visibility, id) {
   return `${cfg.url}/${PREFIX[visibility] || 'a'}/${id}`;
 }
@@ -254,6 +268,8 @@ async function cmdPublish(argv) {
     public: 'bool',
     shared: 'bool',
     private: 'bool',
+    folder: 'string',
+    tag: 'list',
     'no-sandbox': 'bool',
     json: 'bool',
   });
@@ -272,10 +288,17 @@ async function cmdPublish(argv) {
 
   const visibility = pickVisibility(flags, 'private');
   const id = checkId(flags.id ? String(flags.id) : slugify(file));
+  const folder = flags.folder !== undefined ? checkSlug(String(flags.folder), 'folder') : undefined;
+  const tags = flags.tag ? flags.tag.map((t) => checkSlug(t, 'tag')) : undefined;
   const cfg = settings();
 
   await api(cfg, 'PUT', `/api/a/${encodeURIComponent(id)}`, {
-    query: { title: flags.title, visibility },
+    query: {
+      title: flags.title,
+      visibility,
+      folder,
+      tags: tags ? tags.join(',') : undefined,
+    },
     contentType: 'text/html; charset=utf-8',
     body,
   });
@@ -289,10 +312,38 @@ async function cmdPublish(argv) {
 
   const url = docUrl(cfg, visibility, id);
   if (flags.json) {
-    outJSON({ id, url, visibility, bytes: body.length, sandbox: !flags['no-sandbox'] });
+    outJSON({ id, url, visibility, folder, tags, bytes: body.length, sandbox: !flags['no-sandbox'] });
   } else {
     out(url);
   }
+}
+
+async function cmdTag(argv) {
+  const { flags, positionals } = parseFlags(argv, {
+    folder: 'string',
+    tag: 'list',
+    'clear-tags': 'bool',
+    json: 'bool',
+  });
+  const id = positionals[0];
+  if (!id) throw usageError('tag needs an id: folio tag <id> [--folder F] [--tag T]...');
+  if (positionals.length > 1) throw usageError(`unexpected argument: ${positionals[1]}`);
+  checkId(id);
+  if (flags.folder === undefined && !flags.tag && !flags['clear-tags']) {
+    throw usageError('tag needs --folder, --tag, or --clear-tags');
+  }
+  const body = {};
+  if (flags.folder !== undefined) body.folder = checkSlug(String(flags.folder), 'folder');
+  if (flags['clear-tags']) body.tags = [];
+  else if (flags.tag) body.tags = flags.tag.map((t) => checkSlug(t, 'tag'));
+
+  const cfg = settings();
+  await api(cfg, 'PATCH', `/api/a/${encodeURIComponent(id)}`, {
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  });
+  if (flags.json) outJSON({ id, ...body });
+  else out(`tagged ${id}`);
 }
 
 async function cmdList(argv) {
@@ -329,6 +380,8 @@ async function cmdShow(argv) {
   out(`id          ${doc.id}`);
   out(`title       ${doc.title ?? ''}`);
   out(`visibility  ${doc.visibility ?? ''}`);
+  out(`folder      ${doc.folder ?? ''}`);
+  if (Array.isArray(doc.tags) && doc.tags.length) out(`tags        ${doc.tags.join(', ')}`);
   out(`sandbox     ${doc.sandbox !== false}`);
   if (Array.isArray(doc.shared_with) && doc.shared_with.length) {
     out(`shared_with ${doc.shared_with.join(', ')}`);
@@ -417,6 +470,7 @@ async function main(argv) {
     case 'list': case 'ls': await cmdList(rest); return 0;
     case 'show': await cmdShow(rest); return 0;
     case 'share': await cmdShare(rest); return 0;
+    case 'tag': await cmdTag(rest); return 0;
     case 'rm': case 'delete': await cmdRm(rest); return 0;
     case 'login': await cmdLogin(rest); return 0;
     default:

@@ -97,12 +97,16 @@ created, so ordering in the list does not matter and overlap is fine:
 | `https://folio.kz3.dev/p/q3` | `p/*` (Bypass) |
 | `https://folio.kz3.dev/t/q3` | `t/*` (Allow, listed emails) |
 | `https://folio.kz3.dev/a/q3` | `*` (Allow, owner) |
-| `https://folio.kz3.dev/` | `*` (Allow, owner) |
+| `https://folio.kz3.dev/main` | `*` (Allow, owner) |
+| `https://folio.kz3.dev/` (exactly) | `/` (Bypass — App 5, below) |
 | `https://folio.kz3.dev/healthz` | `*` (Allow, owner) |
 
-The bare-hostname app is the catch-all: anything not covered by a more
-specific app lands there, so a new route added to folio later is private by
-default rather than open by default. Create it — do not skip it.
+The bare-hostname app (empty path) is the catch-all: anything not covered by a
+more specific app lands there, so a new route added to folio later is private
+by default rather than open by default. Create it — do not skip it. App 5
+below is an *exact*-path app (`/`, no trailing `*`), which Cloudflare matches
+as more specific than the empty-path catch-all, so it overrides the catch-all
+for that one literal path without opening anything else.
 
 The path field in the UI is entered **without** a leading slash: `api/*`,
 `p/*`, `t/*`. For the catch-all, leave the path field empty.
@@ -175,8 +179,32 @@ metadata for the index page and does **not** enforce anything by itself.
   - **Action**: **Allow**
   - **Include** → selector **Emails** → `<your-email>`
 
-This is what protects the index page at `/` and every private document under
-`/a/*`.
+This is what protects the document index at `/main` and every private
+document under `/a/*`. It also covers any future route you add and forget to
+list here — private by default.
+
+### App 5 — `folio public page` → `folio.kz3.dev/` (Bypass, exact path)
+
+- **Path**: `/` — type the single character `/`, **not** `/*`. An exact path
+  (no trailing `*`) matches only that one literal URL and nothing under it;
+  Cloudflare treats it as more specific than the empty-path catch-all (App 4),
+  so it wins for this one request without affecting `/main`, `/a/*`, or
+  anything else.
+- Policy:
+  - **Policy name**: `everyone`
+  - **Action**: **Bypass**
+  - **Include** → selector **Everyone**
+
+This is the only thing that changes about App 4's protection: `/` itself
+becomes public (folio's own product page — no document data lives there, see
+`src/render.js`'s `renderLanding()`), while `/main` and every `/a/*` document
+stay exactly as owner-only as before.
+
+If your Cloudflare dashboard does not offer an exact (non-wildcard) path match
+for a self-hosted application, the fallback is to leave `/` under the App 4
+catch-all (private) and treat `/main` as the de facto home page for now — the
+origin still serves the product page correctly at `/`, it just will not be
+reachable by the public until the edge policy allows it.
 
 ---
 
@@ -216,14 +244,17 @@ either way.
 From a machine that is **not** logged in to Access:
 
 ```sh
-# public doc  -> 200, no login
+# public doc   -> 200, no login
 curl -sI https://folio.kz3.dev/p/<public-id>
 
-# index       -> 302 to <team>.cloudflareaccess.com (login required)
+# product page -> 200, no login (App 5 Bypass)
 curl -sI https://folio.kz3.dev/
 
-# private doc -> 302 to login (and 404 from the origin even after login
-#                if the doc's visibility is not "private")
+# index        -> 302 to <team>.cloudflareaccess.com (login required)
+curl -sI https://folio.kz3.dev/main
+
+# private doc  -> 302 to login (and 404 from the origin even after login
+#                 if the doc's visibility is not "private")
 curl -sI https://folio.kz3.dev/a/<private-id>
 
 # api without a service token -> 403 from Access
@@ -235,5 +266,7 @@ curl -sI https://folio.kz3.dev/api/a \
 ```
 
 If `/p/*` asks for a login, the Bypass app's path is wrong (check for a stray
-leading slash). If `/` does **not** ask for a login, the catch-all app is
-missing — fix that immediately; the index lists every document.
+leading slash). If `/` asks for a login, App 5's exact path isn't taking
+priority over the catch-all — double check it is literally `/`, not `/*` or
+empty. If `/main` does **not** ask for a login, the catch-all app (App 4) is
+missing — fix that immediately; `/main` lists every document.

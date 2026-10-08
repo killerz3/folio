@@ -1,18 +1,45 @@
 # folio
 
+**Publish a one-page HTML artifact from the command line. Get back a URL on
+your own domain. Nothing touches a third party.**
+
+[![Live product page](https://img.shields.io/badge/product%20page-folio.kz3.dev-2f5bd8)](https://folio.kz3.dev)
+[![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
+[![Node >=22](https://img.shields.io/badge/node-%3E%3D22-339933)](package.json)
+[![Zero runtime deps](https://img.shields.io/badge/dependencies-0-brightgreen)](package.json)
+[![Tests](https://img.shields.io/badge/tests-47%20passing-2f5bd8)](test/)
+
 ![One document, three gateways: a server on the left feeds a single sheet of paper through an open teal gate, a half-closed amber gate, and a locked indigo gate — public, shared and private.](assets/banner.jpg)
 
-A small, self-hosted host for one-page HTML artifacts — reports, dashboards,
-mockups, anything that is a single `index.html` plus maybe some assets.
+folio is a small, self-hosted host for single-page HTML artifacts — reports,
+dashboards, mockups, build logs, anything that is one `index.html` plus maybe
+some assets. You publish a file, you get a URL back, and the document lives as
+a plain directory on your own disk — no database, no managed service, no
+account to create anywhere else.
 
-You publish a file from the command line and get back a URL on your own
-domain. Nothing is uploaded to a third party, the documents live as plain
-files on disk, and who can see what is decided by two independent layers:
-Cloudflare Access at the edge and folio itself at the origin.
+- **Live product page:** [folio.kz3.dev](https://folio.kz3.dev)
+- **Origin:** `http://127.0.0.1:8082` (loopback only, reached via Cloudflare Tunnel)
+- **Runtime:** Node 22, **zero dependencies**, no build step — read the whole
+  server in one sitting (`src/`, ~900 lines).
 
-- Public URL: `https://folio.kz3.dev`
-- Origin: `http://127.0.0.1:8082` (loopback only, reached via Cloudflare Tunnel)
-- Node 22, **zero runtime dependencies**, no build step.
+```sh
+folio publish ./report.html --public --folder reports --tag q3
+# -> https://folio.kz3.dev/p/report
+```
+
+### Why this instead of a gist, a bucket, or a SaaS dashboard tool
+
+- **You own the bytes.** A document is a directory (`index.html`, `meta.json`,
+  `assets/`). Backup is `tar czf`. There is no vendor to lose access to.
+- **Visibility is the URL, truthfully.** `/p/` public, `/t/` shared with named
+  people, `/a/` private — and the origin independently re-checks that the
+  stored visibility matches the prefix on *every* request, so a leaked old
+  link 404s instead of quietly still working.
+- **Browse by folder and tag, not just a flat list.** Every document can carry
+  a folder and free-form subtags; `/main` filters them with CSS-only
+  checkboxes — no client JavaScript runs anywhere on this host, ever.
+- **Nothing to audit but ~900 lines.** No framework, no transitive dependency
+  tree, no build pipeline between the code you read and the code that runs.
 
 ---
 
@@ -26,7 +53,8 @@ visibility is served under its own URL prefix:
 | `/p/<id>` | `public` | anyone on the internet (Access **Bypass**) |
 | `/t/<id>` | `shared` | the email addresses you list in the Access policy |
 | `/a/<id>` | `private` | you only |
-| `/` | — | index of every document; you only |
+| `/` | — | the public product page (this project, not your documents) |
+| `/main` | — | index of every document, folder/tag filterable; you only |
 
 The two layers are deliberately redundant:
 
@@ -93,7 +121,25 @@ Then do the two manual steps it names:
    `/etc/cloudflared/config.yml` above the `http_status:404` catch-all,
    `cloudflared tunnel ingress validate`, restart `cloudflared`.
 2. **DNS + Access** — follow [`deploy/ACCESS.md`](deploy/ACCESS.md): one
-   proxied CNAME and four Access applications.
+   proxied CNAME and five Access applications (one new one, §3 App 5, makes
+   `/` public — the pre-existing four are unchanged).
+
+### Upgrading an existing install to the `/` + `/main` split
+
+This version moves the private document index from `/` to `/main` and puts a
+public product page at `/`. On a server that already runs an older folio:
+
+```sh
+cd ~/folio && git pull
+sudo ./install.sh                 # redeploys code, does not touch documents
+sudo systemctl restart folio
+./scripts/apply-tags.sh           # one-time: seeds folder/tags on existing docs
+```
+
+Then add the one new Cloudflare Access application described in
+[`deploy/ACCESS.md` §3, App 5](deploy/ACCESS.md) so `/` is reachable without a
+login — the pre-existing four applications (`api/*`, `p/*`, `t/*`, catch-all)
+are untouched and still guard everything else, including `/main`.
 
 ### Configuration
 
@@ -126,16 +172,20 @@ from `~/.config/folio/config.json` (mode `0600`):
 
 ```sh
 folio publish ./report.html --title "Q3 report" --private
-folio publish ./deck.html --id q3-deck --public
+folio publish ./deck.html --id q3-deck --public --folder reports --tag q3 --tag finance
 folio list
 folio show q3-deck
 folio share q3-deck --shared --with alice@example.com
 folio share q3-deck --private
+folio tag q3-deck --folder reports --tag q3           # re-tag an existing doc
 folio rm q3-deck
 ```
 
 - `--id` defaults to a slug of the filename.
 - Visibility flags: `--public` | `--shared` | `--private`.
+- `--folder F` / `--tag T` (repeatable) organise the document for `/main`'s
+  filterable index — both are slugs (`/^[a-z0-9][a-z0-9-]{0,31}$/`), purely
+  organisational, and never affect auth or the URL.
 - `--no-sandbox` drops the CSP sandbox for that document.
 - `--json` gives machine-readable output; failures exit non-zero with a
   message on stderr.
@@ -151,8 +201,8 @@ never touches Cloudflare Access. From a laptop, point `FOLIO_URL` at
 ### The HTTP API, if you need it directly
 
 ```
-PUT    /api/a/:id      body = raw HTML (Content-Type: text/html), ?title=&visibility=
-PATCH  /api/a/:id      JSON {title?, visibility?, shared_with?, sandbox?}
+PUT    /api/a/:id      body = raw HTML (Content-Type: text/html), ?title=&visibility=&folder=&tags=a,b
+PATCH  /api/a/:id      JSON {title?, visibility?, shared_with?, folder?, tags?, sandbox?}
 DELETE /api/a/:id      remove the document
 GET    /api/a          JSON list of all documents (metadata only)
 GET    /healthz        200 "ok", no auth
@@ -237,6 +287,8 @@ Trust dashboard (`deploy/ACCESS.md`, §2).
 ```
 src/                    the server (zero dependencies)
 bin/folio               the CLI
+scripts/tags.json       folder/subtags for every existing document (one-time seed)
+scripts/apply-tags.sh   applies tags.json via the API — run once after upgrading
 test/*.test.js          node --test, no dependencies
 systemd/folio.service   the hardened unit
 deploy/ACCESS.md        Cloudflare DNS + Access, click-by-click

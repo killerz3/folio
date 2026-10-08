@@ -32,10 +32,13 @@ $FOLIO_DATA/<id>/assets/...        (optional extra files)
 `meta.json`:
 ```json
 { "id":"q3", "title":"Q3 report", "visibility":"private",
-  "shared_with":[], "sandbox":true,
+  "shared_with":[], "folder":"reports", "tags":["q3","finance"], "sandbox":true,
   "created":"2026-09-09T00:00:00Z", "updated":"...", "bytes":1234, "sha256":"..." }
 ```
 - `visibility` ∈ `public` | `shared` | `private`
+- `folder`: one slug (`/^[a-z0-9][a-z0-9-]{0,31}$/`) or `null`. Purely organisational —
+  it does not affect auth or the URL, only how `/main` groups and filters documents.
+- `tags`: array of slugs (same grammar), de-duplicated, capped at `MAX_TAGS` (16).
 - All writes atomic: write `*.tmp` in same dir then `fs.rename`.
 
 ## ID validation (SECURITY CRITICAL)
@@ -55,13 +58,14 @@ return **404** on mismatch. Never trust the edge. A private doc requested at `/p
 
 ## Routes
 ```
-GET    /                     index page (HTML, lists all docs)
+GET    /                     public product/landing page (static, no auth, no store access)
+GET    /main                 document index (HTML, lists all docs, folder/tag filterable)
 GET    /healthz              200 "ok" (no auth, no logging)
 GET    /p/:id  /t/:id  /a/:id           -> serve index.html
 GET    /p/:id/*  /t/:id/*  /a/:id/*     -> serve asset within doc dir
 PUT    /api/a/:id            publish/replace. body = raw HTML (Content-Type: text/html)
-                             query/JSON header opts: ?title=&visibility=
-PATCH  /api/a/:id            JSON body: {title?, visibility?, shared_with?, sandbox?}
+                             query/JSON header opts: ?title=&visibility=&folder=&tags=a,b
+PATCH  /api/a/:id            JSON body: {title?, visibility?, shared_with?, folder?, tags?, sandbox?}
 DELETE /api/a/:id            remove doc dir
 GET    /api/a                JSON list of all docs (meta only)
 ```
@@ -70,13 +74,14 @@ Unknown route -> 404 (plain text, no stack traces ever).
 ## Auth
 - `/api/*`: require `Authorization: Bearer $FOLIO_TOKEN`. Compare with
   `crypto.timingSafeEqual` on equal-length buffers. Missing/wrong -> 401.
-- If `FOLIO_ACCESS_TEAM` is set, `/api/*` and `/` additionally verify the
+- If `FOLIO_ACCESS_TEAM` is set, `/api/*` and `/main` additionally verify the
   `Cf-Access-Jwt-Assertion` header: fetch + cache JWKS from
   `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, verify RS256 signature,
   `exp`, and `aud` if `FOLIO_ACCESS_AUD` set. Requests from 127.0.0.1 are exempt
   (local CLI). Use `node:crypto` `createPublicKey` + `createVerify`. Cache JWKS 1h.
-- Read routes (`/p /t /a`): no origin auth (Cloudflare Access gates them), but the
-  prefix↔visibility check above is mandatory.
+- Read routes (`/`, `/p /t /a`): no origin auth at all (Cloudflare Access gates
+  `/p /t /a`; `/` is meant to be public). The prefix↔visibility check above is
+  mandatory for `/p /t /a` regardless.
 
 ## Response headers
 Doc responses (`/p/:id`, `/t/:id`, `/a/:id` and their assets):
@@ -87,23 +92,37 @@ Referrer-Policy: no-referrer
 Cache-Control: no-store          (public docs: public, max-age=300)
 ```
 If `meta.sandbox === false`, omit the `sandbox` directive but keep the rest.
-Index page (`/`) gets a strict CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`.
+`/` and `/main` both get a strict CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`.
 
-## Index page
-Server-rendered HTML, no JS frameworks, no external requests. Dark/light via
-`prefers-color-scheme`. Shows: title, id, visibility badge, updated time, size, link.
-Escape ALL interpolated values (docs are attacker-influenced text).
+## / — product page
+Static, server-rendered, no document data, no store access. Describes folio
+itself (what it is, the visibility model, install instructions) for anyone who
+reaches the hostname. Same "no JS frameworks, no external requests" rule as
+`/main`.
+
+## /main — document index
+Server-rendered HTML, no JS frameworks, no external requests, no client
+JavaScript at all. Dark/light via `prefers-color-scheme`. Shows: title, id,
+visibility badge, folder badge, subtag chips, updated time, size, link.
+Folder and tag filtering is CSS-only (`:checked ~` sibling combinators on
+hidden checkboxes) — selecting multiple filters narrows with AND semantics.
+Escape ALL interpolated values (docs are attacker-influenced text), including
+`folder`/`tags`, which also double as CSS class names and MUST be restricted
+to the slug grammar below before they are ever concatenated into a class.
 
 ## CLI: bin/folio
 Reads `FOLIO_URL` (default `http://127.0.0.1:8082`) and `FOLIO_TOKEN`, or `~/.config/folio/config.json`
 (`{"url":"...","token":"..."}`, created with mode 0600).
 ```
-folio publish <file> [--id X] [--title T] [--public|--shared|--private] [--no-sandbox]
+folio publish <file> [--id X] [--title T] [--public|--shared|--private]
+                     [--folder F] [--tag T]... [--no-sandbox]
 folio list
 folio show <id>
 folio share <id> --public | --private | --shared [--with a@b.com]
+folio tag <id> [--folder F] [--tag T]... [--clear-tags]
 folio rm <id>
 ```
+`folder`/`tags` values: `/^[a-z0-9][a-z0-9-]{0,31}$/`, max 16 tags per doc.
 - `--id` defaults to slugified filename. Prints the resulting public URL on success.
 - Non-zero exit + clear stderr on failure. `--json` flag for machine output.
 
@@ -117,4 +136,5 @@ MUST cover, using a real server on an ephemeral port + temp FOLIO_DATA:
 6. CSP sandbox header present on doc responses, absent when sandbox:false
 7. oversize body -> 413
 8. delete removes dir; list reflects changes
-9. index page escapes `<script>` in a doc title
+9. `/main` index escapes `<script>` in a doc title
+10. `/` is the public product page (no doc data, no auth); folder/tags round-trip via PUT/PATCH and are rejected with 400 when malformed
